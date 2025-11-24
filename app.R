@@ -65,28 +65,44 @@ ui <- fluidPage(
       fluidRow(
         column(12,
           h3("How to Use This App"),
-          h4("Date Selection Rules:"),
+          h4("Understanding the Inputs:"),
           tags$ul(
-            tags$li("Dataset covers 1980-01-01 through 1995-12-01."),
-            tags$li("Training end must be inside the date range."),
-            tags$li("Training end must be at least 12 months earlier than end."),
-            tags$li("Otherwise 'Insufficient data' will appear.")
+            tags$li(strong("Date range:"), " The full time period of data to analyze (1980-01-01 to 1995-12-01 available)"),
+            tags$li(strong("Training ends:"), " Where to split data for model training vs validation"),
+            tags$li(strong("Forecast horizon:"), " How many months ahead to forecast FROM the training end date")
           ),
           
           h4("Recommended Settings:"),
           tags$ul(
-            tags$li("Use full range: 1980-01-01 to 1995-12-01"),
-            tags$li("Training ends ≤ 1992-01-01"),
-            tags$li("Gives 3+ years of validation data")
+            tags$li("Date range: 1980-01-01 to 1995-12-01 (full dataset)"),
+            tags$li("Training ends: 1992-01-01 or earlier"),
+            tags$li("Forecast horizon: 12-48 months"),
+            tags$li("This gives you several years of validation data to compare forecasts against actual sales")
+          ),
+          
+          h4("Important Rules:"),
+          tags$ul(
+            tags$li("Training end must be inside the date range"),
+            tags$li("Training end should be at least 12 months before the date range end"),
+            tags$li("Forecast starts FROM the training end date and extends forward by the horizon"),
+            tags$li("Example: Training ends 1992-01-01 + 48-month horizon = forecasts through 1996-01-01")
           ),
 
           h4("Understanding the Forecast Plot:"),
           tags$ul(
-            tags$li("Black = Actual data"),
-            tags$li("Colored lines = Forecast models (TSLM, ETS, ARIMA)"),
-            tags$li("Red dashed = Training cutoff"),
-            tags$li("Blue shaded region = Forecast horizon"),
-            tags$li("Each varietal appears in its own facet panel")
+            tags$li("Black line = Actual historical sales data"),
+            tags$li("Colored lines = Three forecast models (TSLM, ETS, ARIMA)"),
+            tags$li("Red dashed line = Training cutoff (where validation period begins)"),
+            tags$li("Blue shaded region = Forecast period with prediction intervals"),
+            tags$li("Each wine varietal appears in its own panel")
+          ),
+          
+          h4("Understanding the Accuracy Table:"),
+          tags$ul(
+            tags$li(strong("Training rows:"), " How well models fit the training data"),
+            tags$li(strong("Validation rows:"), " How well models predict the held-out validation period"),
+            tags$li("Lower RMSE, MAE, MAPE values = better model performance"),
+            tags$li("Compare models within the same varietal to find the best performer")
           )
         )
       )
@@ -320,14 +336,6 @@ server <- function(input, output, session) {
     parts <- split_data()
     train_end <- parts$train_end
 
-    # Determine x-axis limits
-    x_min <- min(df$Date)
-    x_max <- if (!is.null(fc) && nrow(fc) > 0) {
-      max(fc$Date)
-    } else {
-      max(df$Date)
-    }
-
     p <- df |>
       ggplot(aes(Date, Sales)) +
       geom_line(color = "black") +
@@ -336,8 +344,7 @@ server <- function(input, output, session) {
         x = "Date", y = "Sales"
       ) +
       theme_minimal() +
-      facet_wrap(~ Varietal, scales = "free_y", ncol = 1) +
-      scale_x_date(limits = c(x_min, x_max))
+      facet_wrap(~ Varietal, scales = "free_y", ncol = 1)
 
     # Training cutoff
     p <- p + geom_vline(aes(xintercept = train_end),
@@ -354,6 +361,9 @@ server <- function(input, output, session) {
                  ymin = -Inf, ymax = Inf,
                  alpha = 0.1, fill = "lightblue") +
         autolayer(fc, alpha = 0.8)
+      
+      # Expand x-axis to show all forecasts
+      p <- p + expand_limits(x = c(min(df$Date), shade_end))
     }
 
     p
