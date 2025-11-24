@@ -6,7 +6,7 @@ library(fable)
 library(feasts)
 library(fabletools)
 library(urca)
-
+library(knitr)
 
 # ---- LOAD DATA ----
 wines <- read.csv("AustralianWines.csv")
@@ -55,7 +55,7 @@ ui <- fluidPage(
           h3("Forecast Accuracy"),
           tableOutput("results"),
           h3("Model Specifications"),
-          gt_output("model_specs")
+          tableOutput("model_specs")
         )
       )
     ),
@@ -86,7 +86,7 @@ ui <- fluidPage(
             tags$li("Colors = forecasts (TSLM, ETS, ARIMA)"),
             tags$li("Red dashed = training cutoff"),
             tags$li("Blue shade = forecast region"),
-            tags$li("Each varietal has its own faceted panel")
+            tags$li("Each varietal is shown in its own vertical facet")
           )
         )
       )
@@ -186,10 +186,10 @@ server <- function(input, output, session) {
     accuracy(val_forecasts, validation)
   })
 
-  # --------------------- MODEL SPECS TABLE ---------------------
-  output$model_specs <- render_gt({
+  # --------------------- MODEL SPECS TABLE (NO GT) ---------------------
+  output$model_specs <- renderTable({
     mdl <- models()
-    if (is.null(mdl)) return(gt(data.frame(Message = "No model specs available")))
+    if (is.null(mdl)) return(data.frame(Message = "No model specs available"))
 
     specs <- mdl |>
       glance() |> 
@@ -200,7 +200,7 @@ server <- function(input, output, session) {
         ETS = ets_components
       )
 
-    gt(specs)
+    specs
   })
 
   # --------------------- PLOT ---------------------
@@ -227,9 +227,8 @@ server <- function(input, output, session) {
 
     # Add forecasts + shaded region
     if (!is.null(fc)) {
-      forecast_dates <- unique(fc$Date)
-      shade_start <- min(forecast_dates)
-      shade_end <- max(forecast_dates)
+      shade_start <- min(fc$Date)
+      shade_end <- max(fc$Date)
 
       p <- p +
         annotate("rect",
@@ -245,6 +244,7 @@ server <- function(input, output, session) {
     p
   })
 
+  # --------------------- ACCURACY TABLE ---------------------
   output$results <- renderTable({
     eval_results()
   })
@@ -252,5 +252,3 @@ server <- function(input, output, session) {
 
 # ---- RUN APP ----
 shinyApp(ui, server)
-
-
