@@ -171,8 +171,28 @@ server <- function(input, output, session) {
   # --------------------- FORECASTS ---------------------
   forecasts <- reactive({
     mdl <- models()
+    parts <- split_data()
     if (is.null(mdl)) return(NULL)
-    mdl |> forecast(h = input$h)
+    
+    # Forecast from the END of the filtered data, not training end
+    df <- filtered_data()
+    last_date <- max(df$Date)
+    
+    # Create future dates beyond the data
+    future_data <- df |>
+      group_by_key() |>
+      slice(0) |>
+      bind_rows(
+        df |> 
+          group_by_key() |> 
+          summarise(Date = seq(max(Date) + months(1), 
+                              by = "1 month", 
+                              length.out = input$h),
+                   .groups = "drop")
+      ) |>
+      as_tsibble(index = Date, key = Varietal)
+    
+    mdl |> forecast(new_data = future_data)
   })
 
   # --------------------- ACCURACY ---------------------
@@ -203,9 +223,19 @@ server <- function(input, output, session) {
         # ARIMA
         tryCatch({
           arima_model <- mdl$ARIMA[[i]]
-          arima_report <- report(arima_model)
-          # Extract just the first line which contains the specification
-          arima_spec <- strsplit(arima_report, "\n")[[1]][1]
+          arima_coef <- arima_model$fit$spec
+          
+          # Extract ARIMA orders
+          p <- arima_coef$p
+          d <- arima_coef$d
+          q <- arima_coef$q
+          P <- arima_coef$P
+          D <- arima_coef$D
+          Q <- arima_coef$Q
+          period <- arima_coef$period
+          
+          arima_spec <- sprintf("ARIMA(%d,%d,%d)(%d,%d,%d)[%d]", p, d, q, P, D, Q, period)
+          
           specs_list[[length(specs_list) + 1]] <- data.frame(
             Varietal = varietal,
             Model = "ARIMA",
@@ -224,9 +254,15 @@ server <- function(input, output, session) {
         # ETS
         tryCatch({
           ets_model <- mdl$ETS[[i]]
-          ets_report <- report(ets_model)
-          # Extract just the first line which contains the specification
-          ets_spec <- strsplit(ets_report, "\n")[[1]][1]
+          ets_spec_obj <- ets_model$fit$spec
+          
+          # Extract ETS components (Error, Trend, Season)
+          error_type <- substr(ets_spec_obj$error, 1, 1)
+          trend_type <- substr(ets_spec_obj$trend, 1, 1)
+          season_type <- substr(ets_spec_obj$season, 1, 1)
+          
+          ets_spec <- sprintf("ETS(%s,%s,%s)", error_type, trend_type, season_type)
+          
           specs_list[[length(specs_list) + 1]] <- data.frame(
             Varietal = varietal,
             Model = "ETS",
@@ -243,12 +279,26 @@ server <- function(input, output, session) {
         })
         
         # TSLM
-        specs_list[[length(specs_list) + 1]] <- data.frame(
-          Varietal = varietal,
-          Model = "TSLM",
-          Specification = "TSLM(Sales ~ trend() + season())",
-          stringsAsFactors = FALSE
-        )
+        tryCatch({
+          tslm_model <- mdl$TSLM[[i]]
+          # Get the formula from the model
+          tslm_formula <- formula(tslm_model$fit$model)
+          tslm_spec <- paste0("TSLM(", deparse(tslm_formula), ")")
+          
+          specs_list[[length(specs_list) + 1]] <- data.frame(
+            Varietal = varietal,
+            Model = "TSLM",
+            Specification = tslm_spec,
+            stringsAsFactors = FALSE
+          )
+        }, error = function(e) {
+          specs_list[[length(specs_list) + 1]] <<- data.frame(
+            Varietal = varietal,
+            Model = "TSLM",
+            Specification = "TSLM(Sales ~ trend() + season())",
+            stringsAsFactors = FALSE
+          )
+        })
       }
       
       do.call(rbind, specs_list)
