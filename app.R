@@ -336,9 +336,9 @@ server <- function(input, output, session) {
     parts <- split_data()
     train_end <- parts$train_end
 
-    p <- df |>
-      ggplot(aes(Date, Sales)) +
-      geom_line(color = "black") +
+    # Start with the base plot of actual data
+    p <- ggplot() +
+      geom_line(data = df, aes(x = Date, y = Sales), color = "black") +
       labs(
         title = "Australian Wine Sales Forecasts",
         x = "Date", y = "Sales"
@@ -347,23 +347,28 @@ server <- function(input, output, session) {
       facet_wrap(~ Varietal, scales = "free_y", ncol = 1)
 
     # Training cutoff
-    p <- p + geom_vline(aes(xintercept = train_end),
+    p <- p + geom_vline(xintercept = as.numeric(train_end),
                         linetype = "dashed", color = "red")
 
-    # Forecast shading + lines
+    # Add forecasts if they exist
     if (!is.null(fc) && nrow(fc) > 0) {
       shade_start <- min(fc$Date)
       shade_end <- max(fc$Date)
 
+      # Add shaded forecast region
       p <- p +
         annotate("rect",
-                 xmin = shade_start, xmax = shade_end,
+                 xmin = as.numeric(shade_start), 
+                 xmax = as.numeric(shade_end),
                  ymin = -Inf, ymax = Inf,
-                 alpha = 0.1, fill = "lightblue") +
-        autolayer(fc, alpha = 0.8)
+                 alpha = 0.1, fill = "lightblue")
       
-      # Expand x-axis to show all forecasts
-      p <- p + expand_limits(x = c(min(df$Date), shade_end))
+      # Add forecast lines using autolayer
+      p <- p + autolayer(fc, alpha = 0.8)
+      
+      # Explicitly set x-axis to include all data and forecasts
+      p <- p + coord_cartesian(xlim = c(as.numeric(min(df$Date)), 
+                                        as.numeric(shade_end)))
     }
 
     p
