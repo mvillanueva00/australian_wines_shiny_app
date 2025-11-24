@@ -1,6 +1,3 @@
-requireNamespace("gt")
-
-
 library(tidyverse)
 library(lubridate)
 library(shiny)
@@ -9,7 +6,7 @@ library(fable)
 library(feasts)
 library(fabletools)
 library(urca)
-library(gt)
+
 
 # ---- LOAD DATA ----
 wines <- read.csv("AustralianWines.csv")
@@ -255,4 +252,5 @@ server <- function(input, output, session) {
 
 # ---- RUN APP ----
 shinyApp(ui, server)
+
 
