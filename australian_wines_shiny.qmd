@@ -1,0 +1,277 @@
+---
+title: "Australian Wine Sales"
+format: html
+runtime: shiny
+---
+
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(shiny)
+library(tsibble)
+library(fable)
+library(feasts)
+library(fabletools)
+library(urca)
+```
+
+
+```{r}
+wines <- read.csv("AustralianWines.csv")
+```
+```{r}
+wines <- wines |>
+  mutate(Date = as.Date(paste0("01-", Month), format = "%d-%b-%y"))
+```
+
+```{r}
+wines_ts <- wines |>
+  mutate(across(c(Fortified, Red, Rose, sparkling, Sweet.white, Dry.white),
+                ~ as.numeric(.))) |>
+  pivot_longer(
+    cols = c(Fortified, Red, Rose, sparkling, Sweet.white, Dry.white),
+    names_to = "Varietal",
+    values_to = "Sales"
+  ) |>
+  as_tsibble(index = Date, key = Varietal)
+
+```
+
+```{r}
+ui <- fluidPage(
+  titlePanel("Australian Wine Sales"),
+
+  tabsetPanel(
+    tabPanel("Analysis",
+      sidebarLayout(
+        sidebarPanel(
+          selectInput("wine_type", "Choose varietal:",
+                      choices = unique(wines_ts$Varietal),
+                      selected = "Red",
+                      multiple = FALSE),
+
+          dateRangeInput("date_range", "Date range:",
+                         start = min(wines_ts$Date),
+                         end = max(wines_ts$Date)),
+
+          dateInput("train_end", "Training ends:",
+                    value = as.Date("1992-01-01")),  # Changed to valid date
+
+          numericInput("h", "Forecast horizon (months):",
+                       value = 12, min = 1)
+        ),
+
+        mainPanel(
+          plotOutput("plot"),
+          tableOutput("results")
+        )
+      )
+    ),
+    
+    tabPanel("Instructions",
+      fluidRow(
+        column(12,
+          h3("How to Use This App"),
+          
+          h4("Date Selection Rules:"),
+          tags$ul(
+            tags$li("The dataset covers 1980-01-01 through 1995-12-01, so the Date range must stay within these limits."),
+            tags$li("The Training ends date must be inside the selected Date range."),
+            tags$li("The Training end date must be at least 12 months earlier than the end of the Date range so the app has enough data for validation."),
+            tags$li("If the selected dates break these rules, the app may show 'Insufficient data for validation.'")
+          ),
+          
+          h4("Recommended Settings:"),
+          tags$ul(
+            tags$li("Use the full date range: 1980-01-01 to 1995-12-01"),
+            tags$li("Set Training ends to 1992-01-01 or earlier"),
+            tags$li("This leaves 3+ years of data for model validation")
+          ),
+          
+          h4("Understanding the Plot:"),
+          tags$ul(
+            tags$li("Black line: Actual historical sales data"),
+            tags$li("Colored lines: Forecasts from three different models (TSLM, ETS, ARIMA)"),
+            tags$li("Red dashed line: Where training data ends"),
+            tags$li("Shaded blue area: Forecast period beyond historical data")
+          )
+        )
+      )
+    ),
+    
+    tabPanel("About",
+      fluidRow(
+        column(12,
+          h3("About This App"),
+          p("This Shiny app analyzes Australian wine sales using monthly data. The dataset is converted 
+            into a tsibble with Date as the index and Varietal as the key. Users can filter the data 
+            by varietal and date range, choose a training cutoff, and select a forecast horizon."),
+          p("Three models are fit (TSLM, ETS, ARIMA) and their forecasts are visualized together with 
+            actual sales. Accuracy metrics are calculated for both training and validation windows.")
+        )
+      )
+    )
+  )
+)
+```
+
+
+```{r}
+server <- function(input, output, session) {
+
+  ## --- FILTERED DATA ---
+  filtered_data <- reactive({
+    wines_ts |>
+      filter(
+        Varietal %in% input$wine_type,
+        Date >= input$date_range[1],
+        Date <= input$date_range[2]
+      ) |>
+      fill_gaps(.full = TRUE) |>  # Fill all gaps in the time series
+      tidyr::fill(Sales, .direction = "down") |>  # Forward fill missing values
+      filter(!is.na(Sales))  # Remove any remaining missing values
+  })
+
+  ## --- SPLIT DATA ---
+  split_data <- reactive({
+    df <- filtered_data()
+    train_end <- as.Date(input$train_end)
+    
+    # Ensure train_end is within the filtered data range
+    if(train_end < min(df$Date) || train_end >= max(df$Date)) {
+      train_end <- max(df$Date) - months(12)  # Default to 12 months before end
+    }
+    
+    training <- df |>
+      filter(Date <= train_end)
+    
+    validation <- df |>
+      filter(Date > train_end)
+      
+    list(
+      training = training,
+      validation = validation,
+      train_end = train_end
+    )
+  })
+
+  ## --- MODELS ---
+  models <- reactive({
+    parts <- split_data()
+    training <- parts$training
+
+    # Check if we have enough training data
+    if(nrow(training) < 24) {  
+      return(NULL)
+    }
+
+    # Try to fit models with error handling
+    tryCatch({
+      training |>
+        model(
+          TSLM = TSLM(Sales ~ trend() + season()),
+          ETS = ETS(Sales),
+          ARIMA = ARIMA(Sales)
+        )
+    }, error = function(e) {
+      # If seasonal models fail, try simpler models
+      training |>
+        model(
+          TSLM = TSLM(Sales ~ trend()),
+          ETS = ETS(Sales ~ error("A") + trend("A") + season("N")),  # No seasonality
+          ARIMA = ARIMA(Sales ~ pdq(1,1,1) + PDQ(0,0,0))  # No seasonal ARIMA
+        )
+    })
+  })
+
+  ## --- FORECASTS ---
+  forecasts <- reactive({
+    mdl <- models()
+    if(is.null(mdl)) return(NULL)
+    
+    h <- input$h
+    mdl |>
+      forecast(h = h)
+  })
+
+  ## --- EVALUATION ---
+  eval_results <- reactive({
+    parts <- split_data()
+    mdl <- models()
+    validation <- parts$validation
+    
+    # Check if we have models and validation data
+    if(is.null(mdl) || nrow(validation) == 0) {
+      return(data.frame(Message = "Insufficient data for validation"))
+    }
+    
+    # Generate forecasts for validation period
+    val_forecasts <- mdl |>
+      forecast(new_data = validation)
+    
+    # Calculate accuracy
+    accuracy(val_forecasts, validation)
+  })
+
+  ## --- VISUALIZE ---
+output$plot <- renderPlot({
+  df <- filtered_data()
+  fc <- forecasts()
+  parts <- split_data()
+  train_end <- parts$train_end
+
+  # Start with base plot
+  p <- autoplot(df, Sales) +
+    labs(
+      title = paste(input$wine_type, "Wine Sales with Forecasts"),
+      x = "Date",
+      y = "Sales"
+    ) +
+    theme_minimal()
+  
+  # Add vertical line at training cutoff (use Date object directly)
+  p <- p + 
+    geom_vline(xintercept = train_end,  # Remove as.numeric()
+               linetype = "dashed", color = "red", linewidth = 1) +  # Use linewidth instead of size
+    annotate("text", x = train_end, y = Inf, 
+             label = "Training ends", vjust = 1.5, hjust = -0.1, color = "red")
+  
+  # Add shaded forecast region and forecast lines
+  if(!is.null(fc)) {
+    forecast_start <- max(df$Date) + months(1)
+    forecast_end <- forecast_start + months(input$h - 1)
+    
+    p <- p + 
+      annotate("rect", 
+               xmin = forecast_start,  # Remove as.numeric()
+               xmax = forecast_end,    # Remove as.numeric()
+               ymin = -Inf, ymax = Inf, 
+               alpha = 0.1, fill = "lightblue") +
+      # Add forecast lines on top
+      autolayer(fc, Sales, alpha = 0.7)
+  }
+  
+  p
+})
+
+  ## --- RESULTS TABLE ---
+  output$results <- renderTable({
+    eval_results()
+  })
+}
+```
+
+
+## About
+
+This Shiny app analyzes Australian wine sales using monthly data. The dataset is converted 
+into a tsibble with Date as the index and Varietal as the key. Users can filter the data 
+by varietal and date range, choose a training cutoff, and select a forecast horizon.  
+Three models are fit (TSLM, ETS, ARIMA) and their forecasts are visualized together with 
+actual sales. Accuracy metrics are calculated for both training and validation windows.
+
+
+```{r}
+shinyApp(ui, server)
+```
