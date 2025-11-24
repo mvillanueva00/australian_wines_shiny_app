@@ -36,7 +36,7 @@ ui <- fluidPage(
         sidebarPanel(
           selectInput("wine_type", "Choose varietal(s):",
                       choices = unique(wines_ts$Varietal),
-                      selected = c("Red"),
+                      selected = c("Red", "White"),
                       multiple = TRUE),
 
           dateRangeInput("date_range", "Date range:",
@@ -51,7 +51,7 @@ ui <- fluidPage(
         ),
 
         mainPanel(
-          plotOutput("plot"),
+          plotOutput("plot", height = "600px"),
           h3("Forecast Accuracy"),
           tableOutput("results"),
           h3("Model Specifications"),
@@ -67,10 +67,10 @@ ui <- fluidPage(
           h3("How to Use This App"),
           h4("Date Selection Rules:"),
           tags$ul(
-            tags$li("The dataset covers 1980-01-01 through 1995-12-01."),
+            tags$li("Dataset covers 1980-01-01 through 1995-12-01."),
             tags$li("Training end must be inside the date range."),
             tags$li("Training end must be at least 12 months earlier than end."),
-            tags$li("Otherwise you may see 'Insufficient data'.")
+            tags$li("Otherwise 'Insufficient data' will appear.")
           ),
           
           h4("Recommended Settings:"),
@@ -80,13 +80,13 @@ ui <- fluidPage(
             tags$li("Gives 3+ years of validation data")
           ),
 
-          h4("Understanding the Plot:"),
+          h4("Understanding the Forecast Plot:"),
           tags$ul(
-            tags$li("Black = actual data"),
-            tags$li("Colors = forecasts (TSLM, ETS, ARIMA)"),
-            tags$li("Red dashed = training cutoff"),
-            tags$li("Blue shade = forecast region"),
-            tags$li("Each varietal is shown in its own vertical facet")
+            tags$li("Black = Actual data"),
+            tags$li("Colored lines = Forecast models (TSLM, ETS, ARIMA)"),
+            tags$li("Red dashed = Training cutoff"),
+            tags$li("Blue shaded region = Forecast horizon"),
+            tags$li("Each varietal appears in its own facet panel")
           )
         )
       )
@@ -97,9 +97,9 @@ ui <- fluidPage(
       fluidRow(
         column(12,
           h3("About This App"),
-          p("This Shiny app analyzes Australian wine sales using monthly data."),
-          p("Three models are fit (TSLM, ETS, ARIMA), forecasts are visualized,"),
-          p("and model specifications and accuracy metrics are automatically generated.")
+          p("This Shiny app analyzes Australian monthly wine sales."),
+          p("Three forecasting models are applied (TSLM, ETS, ARIMA)."),
+          p("Forecasts, model accuracy, and model specifications are displayed.")
         )
       )
     )
@@ -117,7 +117,7 @@ server <- function(input, output, session) {
         Date >= input$date_range[1],
         Date <= input$date_range[2]
       ) |>
-      fill_gaps() |>                          
+      fill_gaps() |>
       tidyr::fill(Sales, .direction = "down") |>
       filter(!is.na(Sales))
   })
@@ -127,6 +127,7 @@ server <- function(input, output, session) {
     df <- filtered_data()
     train_end <- as.Date(input$train_end)
 
+    # Safety checks
     if (train_end < min(df$Date) || train_end >= max(df$Date)) {
       train_end <- max(df$Date) - months(12)
     }
@@ -150,16 +151,18 @@ server <- function(input, output, session) {
 
     tryCatch({
       training |>
+        group_by_key() |> 
         model(
-          TSLM = TSLM(Sales ~ trend() + season()),
-          ETS = ETS(Sales),
+          TSLM  = TSLM(Sales ~ trend() + season()),
+          ETS   = ETS(Sales),
           ARIMA = ARIMA(Sales)
         )
     }, error = function(e) {
       training |>
+        group_by_key() |> 
         model(
-          TSLM = TSLM(Sales ~ trend()),
-          ETS = ETS(Sales ~ error("A") + trend("A") + season("N")),
+          TSLM  = TSLM(Sales ~ trend()),
+          ETS   = ETS(Sales ~ error("A") + trend("A") + season("N")),
           ARIMA = ARIMA(Sales ~ pdq(1,1,1) + PDQ(0,0,0))
         )
     })
@@ -186,21 +189,19 @@ server <- function(input, output, session) {
     accuracy(val_forecasts, validation)
   })
 
-  # --------------------- MODEL SPECS TABLE (NO GT) ---------------------
+  # --------------------- MODEL SPECS TABLE ---------------------
   output$model_specs <- renderTable({
     mdl <- models()
-    if (is.null(mdl)) return(data.frame(Message = "No model specs available"))
+    if (is.null(mdl)) return(data.frame(Message = "No model specifications available"))
 
-    specs <- mdl |>
-      glance() |> 
+    mdl |>
+      glance() |>
       select(Varietal, .model, arima_order, ets_components) |>
       rename(
         Model = .model,
         ARIMA = arima_order,
         ETS = ets_components
       )
-
-    specs
   })
 
   # --------------------- PLOT ---------------------
@@ -211,7 +212,7 @@ server <- function(input, output, session) {
     train_end <- parts$train_end
 
     p <- df |>
-      ggplot(aes(x = Date, y = Sales)) +
+      ggplot(aes(Date, Sales)) +
       geom_line(color = "black") +
       labs(
         title = "Australian Wine Sales Forecasts",
@@ -220,24 +221,20 @@ server <- function(input, output, session) {
       theme_minimal() +
       facet_wrap(~ Varietal, scales = "free_y", ncol = 1)
 
-    # Add training cutoff
-    p <- p +
-      geom_vline(aes(xintercept = train_end),
-                 linetype = "dashed", color = "red") 
+    # Training cutoff
+    p <- p + geom_vline(aes(xintercept = train_end),
+                        linetype = "dashed", color = "red")
 
-    # Add forecasts + shaded region
+    # Forecast shading + forecast lines
     if (!is.null(fc)) {
       shade_start <- min(fc$Date)
       shade_end <- max(fc$Date)
 
       p <- p +
         annotate("rect",
-                 xmin = shade_start,
-                 xmax = shade_end,
-                 ymin = -Inf,
-                 ymax = Inf,
-                 alpha = 0.1,
-                 fill = "lightblue") +
+                 xmin = shade_start, xmax = shade_end,
+                 ymin = -Inf, ymax = Inf,
+                 alpha = 0.1, fill = "lightblue") +
         autolayer(fc, alpha = 0.8)
     }
 
