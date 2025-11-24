@@ -6,6 +6,7 @@ library(fable)
 library(feasts)
 library(fabletools)
 library(urca)
+library(gt)
 
 # ---- LOAD DATA ----
 wines <- read.csv("AustralianWines.csv")
@@ -28,13 +29,15 @@ ui <- fluidPage(
   titlePanel("Australian Wine Sales"),
 
   tabsetPanel(
+
+    # --------------------- ANALYSIS TAB ---------------------
     tabPanel("Analysis",
       sidebarLayout(
         sidebarPanel(
-          selectInput("wine_type", "Choose varietal:",
+          selectInput("wine_type", "Choose varietal(s):",
                       choices = unique(wines_ts$Varietal),
-                      selected = "Red",
-                      multiple = FALSE),
+                      selected = c("Red"),
+                      multiple = TRUE),
 
           dateRangeInput("date_range", "Date range:",
                          start = min(wines_ts$Date),
@@ -49,11 +52,15 @@ ui <- fluidPage(
 
         mainPanel(
           plotOutput("plot"),
-          tableOutput("results")
+          h3("Forecast Accuracy"),
+          tableOutput("results"),
+          h3("Model Specifications"),
+          gt_output("model_specs")
         )
       )
     ),
 
+    # --------------------- INSTRUCTIONS TAB ---------------------
     tabPanel("Instructions",
       fluidRow(
         column(12,
@@ -78,18 +85,21 @@ ui <- fluidPage(
             tags$li("Black = actual data"),
             tags$li("Colors = forecasts (TSLM, ETS, ARIMA)"),
             tags$li("Red dashed = training cutoff"),
-            tags$li("Blue shade = forecast region")
+            tags$li("Blue shade = forecast region"),
+            tags$li("Each varietal has its own faceted panel")
           )
         )
       )
     ),
 
+    # --------------------- ABOUT TAB ---------------------
     tabPanel("About",
       fluidRow(
         column(12,
           h3("About This App"),
-          p("This Shiny app analyzes Australian wine sales using monthly data..."),
-          p("Three models are fit (TSLM, ETS, ARIMA) and forecasts are visualized.")
+          p("This Shiny app analyzes Australian wine sales using monthly data."),
+          p("Three models are fit (TSLM, ETS, ARIMA), forecasts are visualized,"),
+          p("and model specifications and accuracy metrics are automatically generated.")
         )
       )
     )
@@ -99,6 +109,7 @@ ui <- fluidPage(
 # ---- SERVER ----
 server <- function(input, output, session) {
 
+  # --------------------- FILTER DATA ---------------------
   filtered_data <- reactive({
     wines_ts |>
       filter(
@@ -106,11 +117,12 @@ server <- function(input, output, session) {
         Date >= input$date_range[1],
         Date <= input$date_range[2]
       ) |>
-      fill_gaps(.full = TRUE) |>
+      fill_gaps() |>                          
       tidyr::fill(Sales, .direction = "down") |>
       filter(!is.na(Sales))
   })
 
+  # --------------------- TRAIN / VALIDATION SPLIT ---------------------
   split_data <- reactive({
     df <- filtered_data()
     train_end <- as.Date(input$train_end)
@@ -129,6 +141,7 @@ server <- function(input, output, session) {
     )
   })
 
+  # --------------------- MODELING ---------------------
   models <- reactive({
     parts <- split_data()
     training <- parts$training
@@ -152,12 +165,14 @@ server <- function(input, output, session) {
     })
   })
 
+  # --------------------- FORECASTS ---------------------
   forecasts <- reactive({
     mdl <- models()
     if (is.null(mdl)) return(NULL)
     mdl |> forecast(h = input$h)
   })
 
+  # --------------------- ACCURACY ---------------------
   eval_results <- reactive({
     parts <- split_data()
     mdl <- models()
@@ -171,33 +186,60 @@ server <- function(input, output, session) {
     accuracy(val_forecasts, validation)
   })
 
+  # --------------------- MODEL SPECS TABLE ---------------------
+  output$model_specs <- render_gt({
+    mdl <- models()
+    if (is.null(mdl)) return(gt(data.frame(Message = "No model specs available")))
+
+    specs <- mdl |>
+      glance() |> 
+      select(Varietal, .model, arima_order, ets_components) |>
+      rename(
+        Model = .model,
+        ARIMA = arima_order,
+        ETS = ets_components
+      )
+
+    gt(specs)
+  })
+
+  # --------------------- PLOT ---------------------
   output$plot <- renderPlot({
     df <- filtered_data()
     fc <- forecasts()
     parts <- split_data()
     train_end <- parts$train_end
 
-    p <- autoplot(df, Sales) +
+    p <- df |>
+      ggplot(aes(x = Date, y = Sales)) +
+      geom_line(color = "black") +
       labs(
-        title = paste(input$wine_type, "Wine Sales with Forecasts"),
+        title = "Australian Wine Sales Forecasts",
         x = "Date", y = "Sales"
       ) +
-      theme_minimal()
+      theme_minimal() +
+      facet_wrap(~ Varietal, scales = "free_y", ncol = 1)
 
+    # Add training cutoff
     p <- p +
-      geom_vline(xintercept = train_end, linetype = "dashed", color = "red", linewidth = 1) +
-      annotate("text", x = train_end, y = Inf, label = "Training ends",
-               vjust = 1.5, hjust = -0.1, color = "red")
+      geom_vline(aes(xintercept = train_end),
+                 linetype = "dashed", color = "red") 
 
+    # Add forecasts + shaded region
     if (!is.null(fc)) {
-      forecast_start <- max(df$Date) + months(1)
-      forecast_end <- forecast_start + months(input$h - 1)
+      forecast_dates <- unique(fc$Date)
+      shade_start <- min(forecast_dates)
+      shade_end <- max(forecast_dates)
 
       p <- p +
         annotate("rect",
-                 xmin = forecast_start, xmax = forecast_end,
-                 ymin = -Inf, ymax = Inf, alpha = 0.1, fill = "lightblue") +
-        autolayer(fc, Sales, alpha = 0.7)
+                 xmin = shade_start,
+                 xmax = shade_end,
+                 ymin = -Inf,
+                 ymax = Inf,
+                 alpha = 0.1,
+                 fill = "lightblue") +
+        autolayer(fc, alpha = 0.8)
     }
 
     p
