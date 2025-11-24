@@ -336,6 +336,14 @@ server <- function(input, output, session) {
     parts <- split_data()
     train_end <- parts$train_end
 
+    # Calculate date range for x-axis including all forecasts
+    x_start <- min(df$Date)
+    x_end <- max(df$Date)
+    
+    if (!is.null(fc) && nrow(fc) > 0) {
+      x_end <- max(x_end, max(fc$Date))
+    }
+
     p <- df |>
       ggplot(aes(Date, Sales)) +
       geom_line(color = "black") +
@@ -344,7 +352,8 @@ server <- function(input, output, session) {
         x = "Date", y = "Sales"
       ) +
       theme_minimal() +
-      facet_wrap(~ Varietal, scales = "free_y", ncol = 1)
+      facet_wrap(~ Varietal, scales = "free_y", ncol = 1) +
+      scale_x_date(limits = c(x_start, x_end), expand = expansion(mult = 0.02))
 
     # Training cutoff
     p <- p + geom_vline(aes(xintercept = train_end),
@@ -352,7 +361,8 @@ server <- function(input, output, session) {
 
     # Forecast shading + forecast lines
     if (!is.null(fc) && nrow(fc) > 0) {
-      shade_start <- min(fc$Date)
+      # Shade from training end to the furthest forecast date
+      shade_start <- train_end + 1  # Start right after training
       shade_end <- max(fc$Date)
 
       p <- p +
@@ -364,7 +374,7 @@ server <- function(input, output, session) {
     }
 
     p
-  })
+  }, res = 96)
 
   # --------------------- ACCURACY TABLE ---------------------
   output$results <- renderTable({
