@@ -361,13 +361,16 @@ server <- function(input, output, session) {
 
     # Forecast shading + forecast lines
     if (!is.null(fc) && nrow(fc) > 0) {
-      # Shade from training end to the furthest forecast date
-      shade_start <- train_end + 1  # Start right after training
-      shade_end <- max(fc$Date)
+      # Calculate the expected forecast end based on horizon
+      forecast_start <- train_end
+      forecast_end <- train_end %m+% months(input$h)
+      
+      # Use the calculated end date or actual max, whichever is later
+      shade_end <- max(forecast_end, max(fc$Date))
 
       p <- p +
         annotate("rect",
-                 xmin = shade_start, xmax = shade_end,
+                 xmin = forecast_start, xmax = shade_end,
                  ymin = -Inf, ymax = Inf,
                  alpha = 0.1, fill = "lightblue") +
         autolayer(fc, alpha = 0.8)
