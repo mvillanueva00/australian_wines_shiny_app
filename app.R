@@ -171,28 +171,10 @@ server <- function(input, output, session) {
   # --------------------- FORECASTS ---------------------
   forecasts <- reactive({
     mdl <- models()
-    parts <- split_data()
     if (is.null(mdl)) return(NULL)
     
-    # Forecast from the END of the filtered data, not training end
-    df <- filtered_data()
-    last_date <- max(df$Date)
-    
-    # Create future dates beyond the data
-    future_data <- df |>
-      group_by_key() |>
-      slice(0) |>
-      bind_rows(
-        df |> 
-          group_by_key() |> 
-          summarise(Date = seq(max(Date) + months(1), 
-                              by = "1 month", 
-                              length.out = input$h),
-                   .groups = "drop")
-      ) |>
-      as_tsibble(index = Date, key = Varietal)
-    
-    mdl |> forecast(new_data = future_data)
+    # Generate h-step ahead forecasts from the training end
+    mdl |> forecast(h = input$h)
   })
 
   # --------------------- ACCURACY ---------------------
@@ -254,14 +236,18 @@ server <- function(input, output, session) {
         # ETS
         tryCatch({
           ets_model <- mdl$ETS[[i]]
-          ets_spec_obj <- ets_model$fit$spec
+          # Get method string which contains E,T,S specification
+          method <- ets_model$fit$method
           
-          # Extract ETS components (Error, Trend, Season)
-          error_type <- substr(ets_spec_obj$error, 1, 1)
-          trend_type <- substr(ets_spec_obj$trend, 1, 1)
-          season_type <- substr(ets_spec_obj$season, 1, 1)
-          
-          ets_spec <- sprintf("ETS(%s,%s,%s)", error_type, trend_type, season_type)
+          # Extract the three components
+          if (nchar(method) >= 3) {
+            error_type <- substr(method, 1, 1)
+            trend_type <- substr(method, 2, 2)
+            season_type <- substr(method, 3, 3)
+            ets_spec <- sprintf("ETS(%s,%s,%s)", error_type, trend_type, season_type)
+          } else {
+            ets_spec <- paste0("ETS(", method, ")")
+          }
           
           specs_list[[length(specs_list) + 1]] <- data.frame(
             Varietal = varietal,
@@ -279,26 +265,12 @@ server <- function(input, output, session) {
         })
         
         # TSLM
-        tryCatch({
-          tslm_model <- mdl$TSLM[[i]]
-          # Get the formula from the model
-          tslm_formula <- formula(tslm_model$fit$model)
-          tslm_spec <- paste0("TSLM(", deparse(tslm_formula), ")")
-          
-          specs_list[[length(specs_list) + 1]] <- data.frame(
-            Varietal = varietal,
-            Model = "TSLM",
-            Specification = tslm_spec,
-            stringsAsFactors = FALSE
-          )
-        }, error = function(e) {
-          specs_list[[length(specs_list) + 1]] <<- data.frame(
-            Varietal = varietal,
-            Model = "TSLM",
-            Specification = "TSLM(Sales ~ trend() + season())",
-            stringsAsFactors = FALSE
-          )
-        })
+        specs_list[[length(specs_list) + 1]] <- data.frame(
+          Varietal = varietal,
+          Model = "TSLM",
+          Specification = "TSLM(Sales ~ trend() + season())",
+          stringsAsFactors = FALSE
+        )
       }
       
       do.call(rbind, specs_list)
