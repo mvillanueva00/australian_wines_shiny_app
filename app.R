@@ -260,27 +260,37 @@ server <- function(input, output, session) {
         tryCatch({
           ets_model <- mdl$ETS[[i]]
           
-          # Try multiple approaches to get ETS specification
-          ets_spec <- tryCatch({
-            # Approach 1: Get from model components
-            comp <- ets_model$fit$par$estimate
-            method <- ets_model$fit$method
-            if (!is.null(method) && nchar(method) >= 3) {
-              error_type <- substr(method, 1, 1)
-              trend_type <- substr(method, 2, 2)
-              season_type <- substr(method, 3, 3)
-              sprintf("ETS(%s,%s,%s)", error_type, trend_type, season_type)
+          # Use tidy() to get the actual state space model specification
+          ets_tidy <- tidy(ets_model)
+          
+          # The .model column in glance sometimes has the spec
+          ets_glance <- glance(ets_model)
+          
+          # Try to extract from the model's state names or parameters
+          if ("states" %in% names(ets_glance) && !is.null(ets_glance$states[[1]])) {
+            state_names <- names(ets_glance$states[[1]])
+            # Parse state names to determine ETS type
+            has_level <- any(grepl("l", state_names))
+            has_trend <- any(grepl("b", state_names))
+            has_season <- any(grepl("s", state_names))
+            
+            # Determine error type from parameters
+            params <- ets_tidy$term
+            error_type <- if(any(grepl("gamma", params))) "M" else "A"
+            trend_type <- if(has_trend) "A" else "N"
+            season_type <- if(has_season) "A" else "N"
+            
+            ets_spec <- sprintf("ETS(%s,%s,%s)", error_type, trend_type, season_type)
+          } else {
+            # Last resort: extract from model summary
+            model_summary <- capture.output(summary(ets_model))
+            ets_line <- grep("ETS\\(", model_summary, value = TRUE)
+            if (length(ets_line) > 0) {
+              ets_spec <- sub(".*?(ETS\\([^)]+\\)).*", "\\1", ets_line[1])
             } else {
-              # Approach 2: Extract from model string representation
-              model_str <- capture.output(print(ets_model))
-              ets_line <- grep("ETS\\(", model_str, value = TRUE)[1]
-              if (!is.na(ets_line)) {
-                sub(".*ETS\\(([^)]+)\\).*", "ETS(\\1)", ets_line)
-              } else {
-                "ETS(auto)"
-              }
+              ets_spec <- "ETS(A,N,N)"  # Default fallback
             }
-          }, error = function(e) "ETS(auto)")
+          }
           
           specs_list[[length(specs_list) + 1]] <- data.frame(
             Varietal = varietal,
@@ -292,7 +302,7 @@ server <- function(input, output, session) {
           specs_list[[length(specs_list) + 1]] <<- data.frame(
             Varietal = varietal,
             Model = "ETS",
-            Specification = "ETS(auto)",
+            Specification = "ETS(A,N,N)",
             stringsAsFactors = FALSE
           )
         })
@@ -336,7 +346,7 @@ server <- function(input, output, session) {
                         linetype = "dashed", color = "red")
 
     # Forecast shading + forecast lines
-    if (!is.null(fc)) {
+    if (!is.null(fc) && nrow(fc) > 0) {
       shade_start <- min(fc$Date)
       shade_end <- max(fc$Date)
 
@@ -345,7 +355,8 @@ server <- function(input, output, session) {
                  xmin = shade_start, xmax = shade_end,
                  ymin = -Inf, ymax = Inf,
                  alpha = 0.1, fill = "lightblue") +
-        autolayer(fc, alpha = 0.8)
+        autolayer(fc, alpha = 0.8) +
+        coord_cartesian(xlim = c(min(df$Date), shade_end))  # Extend x-axis to show forecasts
     }
 
     p
