@@ -186,12 +186,32 @@ server <- function(input, output, session) {
 
   # --------------------- FORECASTS ---------------------
   forecasts <- reactive({
-    mdl <- models()
-    if (is.null(mdl)) return(NULL)
+    parts <- split_data()
+    training <- parts$training
     
-    # Explicitly forecast h periods from training end
-    h_months <- as.integer(input$h)
-    mdl |> forecast(h = h_months)
+    if (nrow(training) < 24) return(NULL)
+    
+    # Fit models on training data
+    mdl <- tryCatch({
+      training |>
+        group_by_key() |> 
+        model(
+          TSLM  = TSLM(Sales ~ trend() + season()),
+          ETS   = ETS(Sales),
+          ARIMA = ARIMA(Sales)
+        )
+    }, error = function(e) {
+      training |>
+        group_by_key() |> 
+        model(
+          TSLM  = TSLM(Sales ~ trend()),
+          ETS   = ETS(Sales ~ error("A") + trend("A") + season("N")),
+          ARIMA = ARIMA(Sales ~ pdq(1,1,1) + PDQ(0,0,0))
+        )
+    })
+    
+    # Forecast h periods beyond the training end
+    mdl |> forecast(h = as.integer(input$h))
   })
 
   # --------------------- ACCURACY ---------------------
@@ -337,21 +357,16 @@ server <- function(input, output, session) {
     parts <- split_data()
     train_end <- parts$train_end
 
-    # Calculate date range for x-axis including all forecasts
+    # Calculate the absolute forecast end date
+    forecast_end_date <- train_end %m+% months(as.integer(input$h))
+    
+    # X-axis should go from data start to forecast end
     x_start <- min(df$Date)
-    x_end <- max(df$Date)
-    
-    # Calculate expected forecast end
-    forecast_end <- train_end %m+% months(as.integer(input$h))
-    x_end <- max(x_end, forecast_end)
-    
-    if (!is.null(fc) && nrow(fc) > 0) {
-      x_end <- max(x_end, max(fc$Date))
-    }
+    x_end <- forecast_end_date
 
     p <- df |>
       ggplot(aes(Date, Sales)) +
-      geom_line(color = "black") +
+      geom_line(color = "black", size = 0.5) +
       labs(
         title = "Australian Wine Sales Forecasts",
         x = "Date", y = "Sales"
@@ -360,21 +375,22 @@ server <- function(input, output, session) {
       facet_wrap(~ Varietal, scales = "free_y", ncol = 1) +
       scale_x_date(limits = c(x_start, x_end), expand = expansion(mult = 0.02))
 
-    # Training cutoff
-    p <- p + geom_vline(aes(xintercept = train_end),
-                        linetype = "dashed", color = "red")
+    # Training cutoff line
+    p <- p + geom_vline(xintercept = train_end,
+                        linetype = "dashed", color = "red", size = 0.8)
 
-    # Forecast shading + forecast lines
+    # Add forecast shading and lines
     if (!is.null(fc) && nrow(fc) > 0) {
-      # Shade from training end to expected forecast end
-      shade_end <- train_end %m+% months(as.integer(input$h))
-
+      # Blue shaded region from training end to forecast end
       p <- p +
         annotate("rect",
-                 xmin = train_end, xmax = shade_end,
+                 xmin = train_end, 
+                 xmax = forecast_end_date,
                  ymin = -Inf, ymax = Inf,
-                 alpha = 0.1, fill = "lightblue") +
-        autolayer(fc, level = c(80, 95), alpha = 0.8)
+                 alpha = 0.1, fill = "lightblue")
+      
+      # Add all forecast lines with prediction intervals
+      p <- p + autolayer(fc, level = c(80, 95), size = 1)
     }
 
     p
