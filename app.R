@@ -1,3 +1,6 @@
+requireNamespace("gt")
+
+
 library(tidyverse)
 library(lubridate)
 library(shiny)
@@ -252,3 +255,4 @@ server <- function(input, output, session) {
 
 # ---- RUN APP ----
 shinyApp(ui, server)
+
