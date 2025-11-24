@@ -195,28 +195,53 @@ server <- function(input, output, session) {
     if (is.null(mdl)) return(data.frame(Message = "No model specifications available"))
 
     tryCatch({
-      specs <- mdl |> glance()
+      # Extract specifications using report() which gives model details
+      specs_list <- list()
       
-      # Extract ETS components and ARIMA orders
-      specs_table <- specs |>
-        mutate(
-          Specification = case_when(
-            .model == "ETS" ~ as.character(ets_spec),
-            .model == "ARIMA" ~ as.character(arima_spec),
-            .model == "TSLM" ~ "Linear model with trend and season",
-            TRUE ~ "Unknown"
-          )
-        ) |>
-        dplyr::select(Varietal, .model, Specification) |>
-        rename(Model = .model)
+      for (varietal in unique(mdl$Varietal)) {
+        for (model_name in c("ARIMA", "ETS", "TSLM")) {
+          tryCatch({
+            model_obj <- mdl |> 
+              filter(Varietal == varietal) |> 
+              dplyr::select(all_of(model_name)) |> 
+              pull(1)
+            
+            if (length(model_obj) > 0) {
+              model_obj <- model_obj[[1]]
+              
+              if (model_name == "ARIMA") {
+                spec <- as.character(model_obj)
+              } else if (model_name == "ETS") {
+                spec <- as.character(model_obj)
+              } else if (model_name == "TSLM") {
+                spec <- "TSLM(Sales ~ trend() + season())"
+              } else {
+                spec <- "Unknown"
+              }
+              
+              specs_list[[length(specs_list) + 1]] <- data.frame(
+                Varietal = varietal,
+                Model = model_name,
+                Specification = spec
+              )
+            }
+          }, error = function(e) {
+            specs_list[[length(specs_list) + 1]] <<- data.frame(
+              Varietal = varietal,
+              Model = model_name,
+              Specification = "Error"
+            )
+          })
+        }
+      }
       
-      specs_table
+      do.call(rbind, specs_list)
     }, error = function(e) {
       # Fallback: simple model listing
       data.frame(
         Varietal = rep(input$wine_type, each = 3),
         Model = rep(c("ARIMA", "ETS", "TSLM"), length(input$wine_type)),
-        Specification = "Error extracting specifications"
+        Specification = paste("Error:", e$message)
       )
     })
   })
