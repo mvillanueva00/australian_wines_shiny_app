@@ -197,56 +197,64 @@ server <- function(input, output, session) {
     tryCatch({
       specs_list <- list()
       
-      for (varietal in unique(mdl$Varietal)) {
-        for (model_name in c("ARIMA", "ETS", "TSLM")) {
-          tryCatch({
-            # Get the specific model for this varietal and model type
-            model_row <- mdl |> 
-              filter(Varietal == varietal)
-            
-            if (model_name == "ARIMA") {
-              spec_info <- model_row |> glance() |> filter(.model == "ARIMA")
-              if (nrow(spec_info) > 0 && !is.na(spec_info$arima_spec)) {
-                spec <- as.character(spec_info$arima_spec)
-              } else {
-                spec <- "ARIMA (auto-selected)"
-              }
-            } else if (model_name == "ETS") {
-              spec_info <- model_row |> glance() |> filter(.model == "ETS")
-              if (nrow(spec_info) > 0 && !is.na(spec_info$ets_spec)) {
-                spec <- as.character(spec_info$ets_spec)
-              } else {
-                spec <- "ETS (auto-selected)"
-              }
-            } else if (model_name == "TSLM") {
-              spec <- "TSLM(Sales ~ trend() + season())"
-            } else {
-              spec <- "Unknown"
-            }
-            
-            specs_list[[length(specs_list) + 1]] <- data.frame(
-              Varietal = varietal,
-              Model = model_name,
-              Specification = spec,
-              stringsAsFactors = FALSE
-            )
-          }, error = function(e) {
-            specs_list[[length(specs_list) + 1]] <<- data.frame(
-              Varietal = varietal,
-              Model = model_name,
-              Specification = "Error extracting spec",
-              stringsAsFactors = FALSE
-            )
-          })
-        }
+      for (i in 1:nrow(mdl)) {
+        varietal <- mdl$Varietal[i]
+        
+        # ARIMA
+        tryCatch({
+          arima_model <- mdl$ARIMA[[i]]
+          arima_report <- report(arima_model)
+          # Extract just the first line which contains the specification
+          arima_spec <- strsplit(arima_report, "\n")[[1]][1]
+          specs_list[[length(specs_list) + 1]] <- data.frame(
+            Varietal = varietal,
+            Model = "ARIMA",
+            Specification = arima_spec,
+            stringsAsFactors = FALSE
+          )
+        }, error = function(e) {
+          specs_list[[length(specs_list) + 1]] <<- data.frame(
+            Varietal = varietal,
+            Model = "ARIMA",
+            Specification = "ARIMA(auto)",
+            stringsAsFactors = FALSE
+          )
+        })
+        
+        # ETS
+        tryCatch({
+          ets_model <- mdl$ETS[[i]]
+          ets_report <- report(ets_model)
+          # Extract just the first line which contains the specification
+          ets_spec <- strsplit(ets_report, "\n")[[1]][1]
+          specs_list[[length(specs_list) + 1]] <- data.frame(
+            Varietal = varietal,
+            Model = "ETS",
+            Specification = ets_spec,
+            stringsAsFactors = FALSE
+          )
+        }, error = function(e) {
+          specs_list[[length(specs_list) + 1]] <<- data.frame(
+            Varietal = varietal,
+            Model = "ETS",
+            Specification = "ETS(auto)",
+            stringsAsFactors = FALSE
+          )
+        })
+        
+        # TSLM
+        specs_list[[length(specs_list) + 1]] <- data.frame(
+          Varietal = varietal,
+          Model = "TSLM",
+          Specification = "TSLM(Sales ~ trend() + season())",
+          stringsAsFactors = FALSE
+        )
       }
       
       do.call(rbind, specs_list)
     }, error = function(e) {
       data.frame(
-        Varietal = rep(input$wine_type, each = 3),
-        Model = rep(c("ARIMA", "ETS", "TSLM"), length(input$wine_type)),
-        Specification = "Error extracting specifications"
+        Message = paste("Error:", e$message)
       )
     })
   })
