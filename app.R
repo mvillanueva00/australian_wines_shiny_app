@@ -113,9 +113,30 @@ ui <- fluidPage(
       fluidRow(
         column(12,
           h3("About This App"),
-          p("This Shiny app analyzes Australian monthly wine sales."),
-          p("Three forecasting models are applied (TSLM, ETS, ARIMA)."),
-          p("Forecasts, model accuracy, and model specifications are displayed.")
+          p("This Shiny app analyzes Australian monthly wine sales using time series forecasting models."),
+          
+          h4("Key Features:"),
+          tags$ul(
+            tags$li(strong("Interactive Controls:"), " Select multiple wine varietals and customize date ranges for focused analysis"),
+            tags$li(strong("Train/Validation Split:"), " Control where training ends to evaluate model performance on held-out data"),
+            tags$li(strong("Three Forecasting Models:"), " Automatically fits TSLM (Time Series Linear Model), ETS (Error-Trend-Seasonal), and ARIMA models"),
+            tags$li(strong("Detailed Model Specifications:"), " View ARIMA orders in (p,d,q)(P,D,Q)[m] format and ETS component forms like ETS(A,N,N)"),
+            tags$li(strong("Comprehensive Accuracy Metrics:"), " Compare training and validation performance using RMSE, MAE, MAPE, and other standard metrics"),
+            tags$li(strong("Visual Forecast Comparison:"), " Color-coded forecast lines with 80% and 95% prediction intervals for uncertainty quantification"),
+            tags$li(strong("Clear Visualization:"), " Red dashed line marks training cutoff, blue shading highlights forecast period"),
+            tags$li(strong("Multi-Varietal Analysis:"), " Faceted plots allow side-by-side comparison of different wine types"),
+            tags$li(strong("User-Friendly Interface:"), " Intuitive controls with helpful instructions and recommended settings")
+          ),
+          
+          h4("Dataset:"),
+          p("Australian Wine Sales dataset covering monthly sales from January 1980 to December 1995 across six wine varietals: Fortified, Red, Rosé, Sparkling, Sweet White, and Dry White."),
+          
+          h4("Models:"),
+          tags$ul(
+            tags$li(strong("TSLM:"), " Linear regression model with trend and seasonal components"),
+            tags$li(strong("ETS:"), " Exponential smoothing state space model with automatic component selection"),
+            tags$li(strong("ARIMA:"), " Auto-regressive integrated moving average model with automatic order selection")
+          )
         )
       )
     )
