@@ -195,41 +195,47 @@ server <- function(input, output, session) {
     if (is.null(mdl)) return(data.frame(Message = "No model specifications available"))
 
     tryCatch({
-      # Extract specifications using report() which gives model details
       specs_list <- list()
       
       for (varietal in unique(mdl$Varietal)) {
         for (model_name in c("ARIMA", "ETS", "TSLM")) {
           tryCatch({
-            model_obj <- mdl |> 
-              filter(Varietal == varietal) |> 
-              dplyr::select(all_of(model_name)) |> 
-              pull(1)
+            # Get the specific model for this varietal and model type
+            model_row <- mdl |> 
+              filter(Varietal == varietal)
             
-            if (length(model_obj) > 0) {
-              model_obj <- model_obj[[1]]
-              
-              if (model_name == "ARIMA") {
-                spec <- as.character(model_obj)
-              } else if (model_name == "ETS") {
-                spec <- as.character(model_obj)
-              } else if (model_name == "TSLM") {
-                spec <- "TSLM(Sales ~ trend() + season())"
+            if (model_name == "ARIMA") {
+              spec_info <- model_row |> glance() |> filter(.model == "ARIMA")
+              if (nrow(spec_info) > 0 && !is.na(spec_info$arima_spec)) {
+                spec <- as.character(spec_info$arima_spec)
               } else {
-                spec <- "Unknown"
+                spec <- "ARIMA (auto-selected)"
               }
-              
-              specs_list[[length(specs_list) + 1]] <- data.frame(
-                Varietal = varietal,
-                Model = model_name,
-                Specification = spec
-              )
+            } else if (model_name == "ETS") {
+              spec_info <- model_row |> glance() |> filter(.model == "ETS")
+              if (nrow(spec_info) > 0 && !is.na(spec_info$ets_spec)) {
+                spec <- as.character(spec_info$ets_spec)
+              } else {
+                spec <- "ETS (auto-selected)"
+              }
+            } else if (model_name == "TSLM") {
+              spec <- "TSLM(Sales ~ trend() + season())"
+            } else {
+              spec <- "Unknown"
             }
+            
+            specs_list[[length(specs_list) + 1]] <- data.frame(
+              Varietal = varietal,
+              Model = model_name,
+              Specification = spec,
+              stringsAsFactors = FALSE
+            )
           }, error = function(e) {
             specs_list[[length(specs_list) + 1]] <<- data.frame(
               Varietal = varietal,
               Model = model_name,
-              Specification = "Error"
+              Specification = "Error extracting spec",
+              stringsAsFactors = FALSE
             )
           })
         }
@@ -237,11 +243,10 @@ server <- function(input, output, session) {
       
       do.call(rbind, specs_list)
     }, error = function(e) {
-      # Fallback: simple model listing
       data.frame(
         Varietal = rep(input$wine_type, each = 3),
         Model = rep(c("ARIMA", "ETS", "TSLM"), length(input$wine_type)),
-        Specification = paste("Error:", e$message)
+        Specification = "Error extracting specifications"
       )
     })
   })
