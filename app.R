@@ -367,6 +367,9 @@ server <- function(input, output, session) {
     parts <- split_data()
     train_end <- parts$train_end
 
+    # Calculate forecast end
+    forecast_end <- train_end %m+% months(as.integer(input$h))
+
     p <- df |>
       ggplot(aes(Date, Sales)) +
       geom_line(color = "black") +
@@ -383,15 +386,41 @@ server <- function(input, output, session) {
 
     # Forecast shading + forecast lines
     if (!is.null(fc) && nrow(fc) > 0) {
-      # Calculate expected forecast end
-      forecast_end <- train_end %m+% months(as.integer(input$h))
-      
       p <- p +
         annotate("rect",
                  xmin = train_end, xmax = forecast_end,
                  ymin = -Inf, ymax = Inf,
-                 alpha = 0.1, fill = "lightblue") +
-        autolayer(fc, alpha = 0.8)
+                 alpha = 0.1, fill = "lightblue")
+      
+      # Convert forecast to data frame and extract components
+      fc_df <- fc %>%
+        as_tibble() %>%
+        mutate(
+          lower_80 = hilo(Sales, 80)$lower,
+          upper_80 = hilo(Sales, 80)$upper,
+          lower_95 = hilo(Sales, 95)$lower,
+          upper_95 = hilo(Sales, 95)$upper,
+          point_forecast = .mean
+        )
+      
+      # Add 95% prediction interval
+      p <- p + geom_ribbon(data = fc_df,
+                           aes(x = Date, ymin = lower_95, ymax = upper_95, 
+                               fill = paste(Varietal, .model, sep = "/")),
+                           alpha = 0.2)
+      
+      # Add 80% prediction interval
+      p <- p + geom_ribbon(data = fc_df,
+                           aes(x = Date, ymin = lower_80, ymax = upper_80, 
+                               fill = paste(Varietal, .model, sep = "/")),
+                           alpha = 0.3)
+      
+      # Add forecast lines
+      p <- p + geom_line(data = fc_df,
+                        aes(x = Date, y = point_forecast, 
+                            color = paste(Varietal, .model, sep = "/")),
+                        linewidth = 1) +
+        labs(color = "Varietal/.model", fill = "level")
     }
 
     p
