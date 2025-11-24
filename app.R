@@ -170,15 +170,14 @@ server <- function(input, output, session) {
 
   # --------------------- FORECASTS ---------------------
   forecasts <- reactive({
-    mdl <- models()
-    parts <- split_data()
-    if (is.null(mdl)) return(NULL)
-    
-    # Get the full filtered data to forecast beyond the entire date range
+    # Get the full filtered data (through the end of date range)
     df <- filtered_data()
     
-    # Fit models on ALL available data (not just training) to forecast into future
-    full_data_models <- tryCatch({
+    if (nrow(df) < 24) return(NULL)
+    
+    # Fit models on the COMPLETE filtered dataset (not just training data)
+    # This allows us to forecast beyond the date range end
+    full_models <- tryCatch({
       df |>
         group_by_key() |> 
         model(
@@ -196,8 +195,8 @@ server <- function(input, output, session) {
         )
     })
     
-    # Forecast h months BEYOND the end of the full date range
-    full_data_models |> forecast(h = input$h)
+    # Forecast h periods beyond the end of the data
+    full_models |> forecast(h = input$h)
   })
 
   # --------------------- ACCURACY ---------------------
