@@ -1,0 +1,23 @@
+{
+  "$schema": "https://rstudio.github.io/r-manifest-schema/v1/manifest.json",
+  "name": "australian_wines_shiny_app",
+  "version": "0.1.0",
+  "description": "Shiny app for Australian wine sales",
+  "scripts": {
+    "app": "app.R"
+  },
+  "packages": [
+    "shiny",
+    "tidyverse",
+    "lubridate",
+    "tsibble",
+    "fable",
+    "feasts",
+    "fabletools",
+    "urca"
+  ],
+  "files": [
+    "app.R",
+    "AustralianWines.csv"
+  ]
+}
