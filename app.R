@@ -389,8 +389,15 @@ server <- function(input, output, session) {
                  ymin = -Inf, ymax = Inf,
                  alpha = 0.1, fill = "lightblue")
       
-      # Add all forecast lines with prediction intervals
-      p <- p + autolayer(fc, level = c(80, 95), size = 1)
+      # Extract point forecasts and add them as lines
+      fc_data <- fc |>
+        as_tibble() |>
+        select(Varietal, .model, Date, .mean)
+      
+      # Add forecast lines manually
+      p <- p + geom_line(data = fc_data, 
+                         aes(x = Date, y = .mean, color = .model),
+                         size = 1, alpha = 0.8)
     }
 
     p
