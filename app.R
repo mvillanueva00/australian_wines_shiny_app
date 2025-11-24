@@ -207,31 +207,10 @@ server <- function(input, output, session) {
 
   # --------------------- FORECASTS ---------------------
   forecasts <- reactive({
-    parts <- split_data()
-    training <- parts$training
+    mdl <- models()
+    if (is.null(mdl)) return(NULL)
     
-    if (nrow(training) < 24) return(NULL)
-    
-    # Fit models on training data
-    mdl <- tryCatch({
-      training |>
-        group_by_key() |> 
-        model(
-          TSLM  = TSLM(Sales ~ trend() + season()),
-          ETS   = ETS(Sales),
-          ARIMA = ARIMA(Sales)
-        )
-    }, error = function(e) {
-      training |>
-        group_by_key() |> 
-        model(
-          TSLM  = TSLM(Sales ~ trend()),
-          ETS   = ETS(Sales ~ error("A") + trend("A") + season("N")),
-          ARIMA = ARIMA(Sales ~ pdq(1,1,1) + PDQ(0,0,0))
-        )
-    })
-    
-    # Forecast h periods beyond the training end
+    # Generate forecasts for h periods
     mdl |> forecast(h = as.integer(input$h))
   })
 
@@ -387,18 +366,18 @@ server <- function(input, output, session) {
 
     p <- df |>
       ggplot(aes(Date, Sales)) +
-      geom_line(color = "black", size = 0.5) +
+      geom_line(color = "black", linewidth = 0.5) +
       labs(
         title = "Australian Wine Sales Forecasts",
         x = "Date", y = "Sales"
       ) +
       theme_minimal() +
       facet_wrap(~ Varietal, scales = "free_y", ncol = 1) +
-      scale_x_date(limits = c(x_start, x_end), expand = expansion(mult = 0.02))
+      coord_cartesian(xlim = c(x_start, x_end))
 
     # Training cutoff line
     p <- p + geom_vline(xintercept = train_end,
-                        linetype = "dashed", color = "red", size = 0.8)
+                        linetype = "dashed", color = "red", linewidth = 0.8)
 
     # Add forecast shading and lines
     if (!is.null(fc) && nrow(fc) > 0) {
@@ -410,15 +389,8 @@ server <- function(input, output, session) {
                  ymin = -Inf, ymax = Inf,
                  alpha = 0.1, fill = "lightblue")
       
-      # Extract point forecasts and add them as lines
-      fc_data <- fc |>
-        as_tibble() |>
-        select(Varietal, .model, Date, .mean)
-      
-      # Add forecast lines manually
-      p <- p + geom_line(data = fc_data, 
-                         aes(x = Date, y = .mean, color = .model),
-                         size = 1, alpha = 0.8)
+      # Use autolayer to add forecasts with prediction intervals
+      p <- p + autolayer(fc, level = c(80, 95))
     }
 
     p
