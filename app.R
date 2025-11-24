@@ -189,8 +189,9 @@ server <- function(input, output, session) {
     mdl <- models()
     if (is.null(mdl)) return(NULL)
     
-    # Forecast h periods from the training end
-    mdl |> forecast(h = input$h)
+    # Explicitly forecast h periods from training end
+    h_months <- as.integer(input$h)
+    mdl |> forecast(h = h_months)
   })
 
   # --------------------- ACCURACY ---------------------
@@ -340,6 +341,10 @@ server <- function(input, output, session) {
     x_start <- min(df$Date)
     x_end <- max(df$Date)
     
+    # Calculate expected forecast end
+    forecast_end <- train_end %m+% months(as.integer(input$h))
+    x_end <- max(x_end, forecast_end)
+    
     if (!is.null(fc) && nrow(fc) > 0) {
       x_end <- max(x_end, max(fc$Date))
     }
@@ -361,19 +366,15 @@ server <- function(input, output, session) {
 
     # Forecast shading + forecast lines
     if (!is.null(fc) && nrow(fc) > 0) {
-      # Calculate the expected forecast end based on horizon
-      forecast_start <- train_end
-      forecast_end <- train_end %m+% months(input$h)
-      
-      # Use the calculated end date or actual max, whichever is later
-      shade_end <- max(forecast_end, max(fc$Date))
+      # Shade from training end to expected forecast end
+      shade_end <- train_end %m+% months(as.integer(input$h))
 
       p <- p +
         annotate("rect",
-                 xmin = forecast_start, xmax = shade_end,
+                 xmin = train_end, xmax = shade_end,
                  ymin = -Inf, ymax = Inf,
                  alpha = 0.1, fill = "lightblue") +
-        autolayer(fc, alpha = 0.8)
+        autolayer(fc, level = c(80, 95), alpha = 0.8)
     }
 
     p
