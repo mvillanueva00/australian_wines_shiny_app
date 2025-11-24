@@ -72,11 +72,12 @@ ui <- fluidPage(
             tags$li(strong("Forecast horizon:"), " How many months ahead to forecast FROM the training end date")
           ),
           
-          h4("Recommended Settings:"),
+          h4("Recommended Settings for Best Visualization:"),
           tags$ul(
             tags$li("Date range: 1980-01-01 to 1995-12-01 (full dataset)"),
             tags$li("Training ends: 1992-01-01 or earlier"),
-            tags$li("Forecast horizon: 12-48 months"),
+            tags$li(strong("Forecast horizon: 12-36 months"), " (recommended for optimal visualization)"),
+            tags$li("Longer horizons (48-60+ months) will generate forecasts but may appear compressed in the plot"),
             tags$li("This gives you several years of validation data to compare forecasts against actual sales")
           ),
           
@@ -85,7 +86,7 @@ ui <- fluidPage(
             tags$li("Training end must be inside the date range"),
             tags$li("Training end should be at least 12 months before the date range end"),
             tags$li("Forecast starts FROM the training end date and extends forward by the horizon"),
-            tags$li("Example: Training ends 1992-01-01 + 48-month horizon = forecasts through 1996-01-01")
+            tags$li("Example: Training ends 1992-01-01 + 24-month horizon = forecasts through 1994-01-01")
           ),
 
           h4("Understanding the Forecast Plot:"),
@@ -93,7 +94,8 @@ ui <- fluidPage(
             tags$li("Black line = Actual historical sales data"),
             tags$li("Colored lines = Three forecast models (TSLM, ETS, ARIMA)"),
             tags$li("Red dashed line = Training cutoff (where validation period begins)"),
-            tags$li("Blue shaded region = Forecast period with prediction intervals"),
+            tags$li("Blue shaded region = Forecast period with prediction intervals (80% and 95%)"),
+            tags$li("Gray shaded bands = Prediction interval uncertainty ranges"),
             tags$li("Each wine varietal appears in its own panel")
           ),
           
@@ -103,6 +105,14 @@ ui <- fluidPage(
             tags$li(strong("Validation rows:"), " How well models predict the held-out validation period"),
             tags$li("Lower RMSE, MAE, MAPE values = better model performance"),
             tags$li("Compare models within the same varietal to find the best performer")
+          ),
+          
+          h4("Tips for Best Results:"),
+          tags$ul(
+            tags$li("Start with a 24-month forecast horizon to see clear forecast patterns"),
+            tags$li("Use at least 10 years of training data for stable model estimates"),
+            tags$li("Leave at least 2-3 years for validation to properly evaluate forecast accuracy"),
+            tags$li("Select multiple varietals to compare forecasting performance across wine types")
           )
         )
       )
@@ -357,44 +367,35 @@ server <- function(input, output, session) {
     parts <- split_data()
     train_end <- parts$train_end
 
-    # Calculate the absolute forecast end date
-    forecast_end_date <- train_end %m+% months(as.integer(input$h))
-    
-    # X-axis should go from data start to forecast end
-    x_start <- min(df$Date)
-    x_end <- forecast_end_date
-
     p <- df |>
       ggplot(aes(Date, Sales)) +
-      geom_line(color = "black", linewidth = 0.5) +
+      geom_line(color = "black") +
       labs(
         title = "Australian Wine Sales Forecasts",
         x = "Date", y = "Sales"
       ) +
       theme_minimal() +
-      facet_wrap(~ Varietal, scales = "free_y", ncol = 1) +
-      coord_cartesian(xlim = c(x_start, x_end))
+      facet_wrap(~ Varietal, scales = "free_y", ncol = 1)
 
-    # Training cutoff line
-    p <- p + geom_vline(xintercept = train_end,
-                        linetype = "dashed", color = "red", linewidth = 0.8)
+    # Training cutoff
+    p <- p + geom_vline(aes(xintercept = train_end),
+                        linetype = "dashed", color = "red")
 
-    # Add forecast shading and lines
+    # Forecast shading + forecast lines
     if (!is.null(fc) && nrow(fc) > 0) {
-      # Blue shaded region from training end to forecast end
+      # Calculate expected forecast end
+      forecast_end <- train_end %m+% months(as.integer(input$h))
+      
       p <- p +
         annotate("rect",
-                 xmin = train_end, 
-                 xmax = forecast_end_date,
+                 xmin = train_end, xmax = forecast_end,
                  ymin = -Inf, ymax = Inf,
-                 alpha = 0.1, fill = "lightblue")
-      
-      # Use autolayer to add forecasts with prediction intervals
-      p <- p + autolayer(fc, level = c(80, 95))
+                 alpha = 0.1, fill = "lightblue") +
+        autolayer(fc, alpha = 0.8)
     }
 
     p
-  }, res = 96)
+  })
 
   # --------------------- ACCURACY TABLE ---------------------
   output$results <- renderTable({
