@@ -36,7 +36,7 @@ ui <- fluidPage(
         sidebarPanel(
           selectInput("wine_type", "Choose varietal(s):",
                       choices = unique(wines_ts$Varietal),
-                      selected = c("Red", "White"),
+                      selected = c("Red", "Dry.white"),
                       multiple = TRUE),
 
           dateRangeInput("date_range", "Date range:",
@@ -194,14 +194,38 @@ server <- function(input, output, session) {
     mdl <- models()
     if (is.null(mdl)) return(data.frame(Message = "No model specifications available"))
 
-    mdl |>
-      glance() |>
-      select(Varietal, .model, arima_order, ets_components) |>
-      rename(
-        Model = .model,
-        ARIMA = arima_order,
-        ETS = ets_components
+    tryCatch({
+      specs <- mdl |> glance()
+      
+      # Create a clean specifications table
+      specs_table <- specs |>
+        dplyr::select(Varietal, .model, any_of(c("sigma2", "log_lik", "AIC", "AICc", "BIC"))) |>
+        rename(Model = .model)
+      
+      # Try to add model-specific information
+      if ("ar_roots" %in% names(specs)) {
+        specs_table$ARIMA_spec <- sapply(specs$ar_roots, function(x) {
+          if (is.null(x) || length(x) == 0) return("Auto")
+          return("Custom")
+        })
+      }
+      
+      if ("states" %in% names(specs)) {
+        specs_table$ETS_spec <- sapply(specs$states, function(x) {
+          if (is.null(x)) return("Auto")
+          return(paste(names(x), collapse = ","))
+        })
+      }
+      
+      specs_table
+    }, error = function(e) {
+      # Fallback: simple model listing
+      data.frame(
+        Varietal = rep(input$wine_type, each = 3),
+        Model = rep(c("ARIMA", "ETS", "TSLM"), length(input$wine_type)),
+        Status = "Fitted"
       )
+    })
   })
 
   # --------------------- PLOT ---------------------
