@@ -170,14 +170,21 @@ server <- function(input, output, session) {
 
   # --------------------- FORECASTS ---------------------
   forecasts <- reactive({
-    # Get the full filtered data (through the end of date range)
+    mdl <- models()
+    if (is.null(mdl)) return(NULL)
+    
+    # Forecast h periods from the training end
+    mdl |> forecast(h = input$h)
+  })
+  
+  # --------------------- FUTURE FORECASTS (beyond data) ---------------------
+  future_forecasts <- reactive({
     df <- filtered_data()
     
     if (nrow(df) < 24) return(NULL)
     
-    # Fit models on the COMPLETE filtered dataset (not just training data)
-    # This allows us to forecast beyond the date range end
-    full_models <- tryCatch({
+    # Fit models on ALL filtered data to forecast into future
+    future_models <- tryCatch({
       df |>
         group_by_key() |> 
         model(
@@ -195,8 +202,8 @@ server <- function(input, output, session) {
         )
     })
     
-    # Forecast h periods beyond the end of the data
-    full_models |> forecast(h = input$h)
+    # Forecast beyond the date range end
+    future_models |> forecast(h = input$h)
   })
 
   # --------------------- ACCURACY ---------------------
@@ -327,13 +334,16 @@ server <- function(input, output, session) {
   output$plot <- renderPlot({
     df <- filtered_data()
     fc <- forecasts()
+    future_fc <- future_forecasts()
     parts <- split_data()
     train_end <- parts$train_end
 
     # Determine x-axis limits
     x_min <- min(df$Date)
-    x_max <- if (!is.null(fc) && nrow(fc) > 0) {
-      max(max(fc$Date), max(df$Date))
+    x_max <- if (!is.null(future_fc) && nrow(future_fc) > 0) {
+      max(future_fc$Date)
+    } else if (!is.null(fc) && nrow(fc) > 0) {
+      max(fc$Date)
     } else {
       max(df$Date)
     }
@@ -353,7 +363,7 @@ server <- function(input, output, session) {
     p <- p + geom_vline(aes(xintercept = train_end),
                         linetype = "dashed", color = "red")
 
-    # Forecast shading + forecast lines
+    # Validation forecast shading + lines
     if (!is.null(fc) && nrow(fc) > 0) {
       shade_start <- min(fc$Date)
       shade_end <- max(fc$Date)
@@ -364,6 +374,19 @@ server <- function(input, output, session) {
                  ymin = -Inf, ymax = Inf,
                  alpha = 0.1, fill = "lightblue") +
         autolayer(fc, alpha = 0.8)
+    }
+    
+    # Future forecast (beyond data range) - different shading
+    if (!is.null(future_fc) && nrow(future_fc) > 0) {
+      future_start <- max(df$Date)
+      future_end <- max(future_fc$Date)
+      
+      p <- p +
+        annotate("rect",
+                 xmin = future_start, xmax = future_end,
+                 ymin = -Inf, ymax = Inf,
+                 alpha = 0.15, fill = "lightgreen") +
+        autolayer(future_fc, alpha = 0.6, linetype = "dashed")
     }
 
     p
