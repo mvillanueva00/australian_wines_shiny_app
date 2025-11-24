@@ -171,10 +171,33 @@ server <- function(input, output, session) {
   # --------------------- FORECASTS ---------------------
   forecasts <- reactive({
     mdl <- models()
+    parts <- split_data()
     if (is.null(mdl)) return(NULL)
     
-    # Generate h-step ahead forecasts from the training end
-    mdl |> forecast(h = input$h)
+    # Get the full filtered data to forecast beyond
+    df <- filtered_data()
+    
+    # Refit models on ALL available data to forecast into the future
+    all_data_models <- tryCatch({
+      df |>
+        group_by_key() |> 
+        model(
+          TSLM  = TSLM(Sales ~ trend() + season()),
+          ETS   = ETS(Sales),
+          ARIMA = ARIMA(Sales)
+        )
+    }, error = function(e) {
+      df |>
+        group_by_key() |> 
+        model(
+          TSLM  = TSLM(Sales ~ trend()),
+          ETS   = ETS(Sales ~ error("A") + trend("A") + season("N")),
+          ARIMA = ARIMA(Sales ~ pdq(1,1,1) + PDQ(0,0,0))
+        )
+    })
+    
+    # Forecast h months into the future beyond the data
+    all_data_models |> forecast(h = input$h)
   })
 
   # --------------------- ACCURACY ---------------------
@@ -236,18 +259,28 @@ server <- function(input, output, session) {
         # ETS
         tryCatch({
           ets_model <- mdl$ETS[[i]]
-          # Get method string which contains E,T,S specification
-          method <- ets_model$fit$method
           
-          # Extract the three components
-          if (nchar(method) >= 3) {
-            error_type <- substr(method, 1, 1)
-            trend_type <- substr(method, 2, 2)
-            season_type <- substr(method, 3, 3)
-            ets_spec <- sprintf("ETS(%s,%s,%s)", error_type, trend_type, season_type)
-          } else {
-            ets_spec <- paste0("ETS(", method, ")")
-          }
+          # Try multiple approaches to get ETS specification
+          ets_spec <- tryCatch({
+            # Approach 1: Get from model components
+            comp <- ets_model$fit$par$estimate
+            method <- ets_model$fit$method
+            if (!is.null(method) && nchar(method) >= 3) {
+              error_type <- substr(method, 1, 1)
+              trend_type <- substr(method, 2, 2)
+              season_type <- substr(method, 3, 3)
+              sprintf("ETS(%s,%s,%s)", error_type, trend_type, season_type)
+            } else {
+              # Approach 2: Extract from model string representation
+              model_str <- capture.output(print(ets_model))
+              ets_line <- grep("ETS\\(", model_str, value = TRUE)[1]
+              if (!is.na(ets_line)) {
+                sub(".*ETS\\(([^)]+)\\).*", "ETS(\\1)", ets_line)
+              } else {
+                "ETS(auto)"
+              }
+            }
+          }, error = function(e) "ETS(auto)")
           
           specs_list[[length(specs_list) + 1]] <- data.frame(
             Varietal = varietal,
