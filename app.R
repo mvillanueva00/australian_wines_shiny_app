@@ -197,25 +197,18 @@ server <- function(input, output, session) {
     tryCatch({
       specs <- mdl |> glance()
       
-      # Create a clean specifications table
+      # Extract ETS components and ARIMA orders
       specs_table <- specs |>
-        dplyr::select(Varietal, .model, any_of(c("sigma2", "log_lik", "AIC", "AICc", "BIC"))) |>
+        mutate(
+          Specification = case_when(
+            .model == "ETS" ~ as.character(ets_spec),
+            .model == "ARIMA" ~ as.character(arima_spec),
+            .model == "TSLM" ~ "Linear model with trend and season",
+            TRUE ~ "Unknown"
+          )
+        ) |>
+        dplyr::select(Varietal, .model, Specification) |>
         rename(Model = .model)
-      
-      # Try to add model-specific information
-      if ("ar_roots" %in% names(specs)) {
-        specs_table$ARIMA_spec <- sapply(specs$ar_roots, function(x) {
-          if (is.null(x) || length(x) == 0) return("Auto")
-          return("Custom")
-        })
-      }
-      
-      if ("states" %in% names(specs)) {
-        specs_table$ETS_spec <- sapply(specs$states, function(x) {
-          if (is.null(x)) return("Auto")
-          return(paste(names(x), collapse = ","))
-        })
-      }
       
       specs_table
     }, error = function(e) {
@@ -223,7 +216,7 @@ server <- function(input, output, session) {
       data.frame(
         Varietal = rep(input$wine_type, each = 3),
         Model = rep(c("ARIMA", "ETS", "TSLM"), length(input$wine_type)),
-        Status = "Fitted"
+        Specification = "Error extracting specifications"
       )
     })
   })
