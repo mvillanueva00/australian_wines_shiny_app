@@ -174,11 +174,11 @@ server <- function(input, output, session) {
     parts <- split_data()
     if (is.null(mdl)) return(NULL)
     
-    # Get the full filtered data to forecast beyond
+    # Get the full filtered data to forecast beyond the entire date range
     df <- filtered_data()
     
-    # Refit models on ALL available data to forecast into the future
-    all_data_models <- tryCatch({
+    # Fit models on ALL available data (not just training) to forecast into future
+    full_data_models <- tryCatch({
       df |>
         group_by_key() |> 
         model(
@@ -196,8 +196,8 @@ server <- function(input, output, session) {
         )
     })
     
-    # Forecast h months into the future beyond the data
-    all_data_models |> forecast(h = input$h)
+    # Forecast h months BEYOND the end of the full date range
+    full_data_models |> forecast(h = input$h)
   })
 
   # --------------------- ACCURACY ---------------------
@@ -331,6 +331,14 @@ server <- function(input, output, session) {
     parts <- split_data()
     train_end <- parts$train_end
 
+    # Determine x-axis limits
+    x_min <- min(df$Date)
+    x_max <- if (!is.null(fc) && nrow(fc) > 0) {
+      max(max(fc$Date), max(df$Date))
+    } else {
+      max(df$Date)
+    }
+
     p <- df |>
       ggplot(aes(Date, Sales)) +
       geom_line(color = "black") +
@@ -339,7 +347,8 @@ server <- function(input, output, session) {
         x = "Date", y = "Sales"
       ) +
       theme_minimal() +
-      facet_wrap(~ Varietal, scales = "free_y", ncol = 1)
+      facet_wrap(~ Varietal, scales = "free_y", ncol = 1) +
+      scale_x_date(limits = c(x_min, x_max))
 
     # Training cutoff
     p <- p + geom_vline(aes(xintercept = train_end),
@@ -355,8 +364,7 @@ server <- function(input, output, session) {
                  xmin = shade_start, xmax = shade_end,
                  ymin = -Inf, ymax = Inf,
                  alpha = 0.1, fill = "lightblue") +
-        autolayer(fc, alpha = 0.8) +
-        coord_cartesian(xlim = c(min(df$Date), shade_end))  # Extend x-axis to show forecasts
+        autolayer(fc, alpha = 0.8)
     }
 
     p
